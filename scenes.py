@@ -23,7 +23,7 @@ SAFE_ZONE_TILES = 2
 STALACT_LEN_TILES = 3
 STALAG_LEN_TILES = 3
 STALACT_FALL_GRAV = 0.9
-STALACT_MAX_FALL  = 20.0
+STALACT_MAX_FALL = 20.0
 STALACT_TRIGGER_PAD = 2
 
 TIP_H = TILE
@@ -76,7 +76,7 @@ class TileMap:
 
                 if ch in ("#", "="):
                     self.base_solids.append(r)
-                elif ch == "D":
+                elif ch in ("D", "1", "2", "R", "F"):
                     self.doors.append(r)
                 elif ch == "P":
                     self.spawn_px = (rx, ry)
@@ -94,18 +94,38 @@ class TileMap:
             pygame.Rect(0, -TILE, self.world_w, TILE),
         ])
 
+    def tile_at_pixel(self, px: int, py: int) -> str:
+        tx = px // TILE
+        ty = py // TILE
+        if 0 <= ty < self.h and 0 <= tx < self.w:
+            return self.grid[ty][tx]
+        return "."
+
+    def tile_under_player(self, player_rect: pygame.Rect) -> str:
+        return self.tile_at_pixel(player_rect.centerx, player_rect.centery)
+
     def draw(self, screen, assets: Assets):
         for y, row in enumerate(self.grid):
             for x, ch in enumerate(row):
                 px, py = x * TILE, y * TILE
+                rect = pygame.Rect(px, py, TILE, TILE)
+
                 if ch == "#":
                     screen.blit(assets.tileset.ground, (px, py))
                 elif ch == "=":
                     screen.blit(assets.tileset.platform, (px, py))
                 elif ch == "D":
-                    pygame.draw.rect(screen, (180, 70, 70), pygame.Rect(px, py, TILE, TILE))
+                    pygame.draw.rect(screen, (180, 70, 70), rect)
+                elif ch == "1":
+                    pygame.draw.rect(screen, (60, 220, 120), rect)   # usa lvl1
+                elif ch == "2":
+                    pygame.draw.rect(screen, (255, 170, 40), rect)   # usa lvl2
+                elif ch == "R":
+                    pygame.draw.rect(screen, (80, 140, 255), rect)   # return to hub
+                elif ch == "F":
+                    pygame.draw.rect(screen, (80, 200, 80), rect)    # final portal
                 elif ch == LAVA_CHAR:
-                    pygame.draw.rect(screen, (220, 80, 20), pygame.Rect(px, py, TILE, TILE))
+                    pygame.draw.rect(screen, (220, 80, 20), rect)
 
 
 class StalactiteGroup:
@@ -166,15 +186,31 @@ class StalactiteGroup:
 
     def draw(self, screen):
         base_h = 2 * TILE
-        pygame.draw.rect(screen, (95, 95, 95), pygame.Rect(self.x, int(self.y), self.w, min(base_h, self.h)))
-        pygame.draw.rect(screen, (75, 75, 75), pygame.Rect(self.x, int(self.y) + min(base_h, self.h), self.w, max(0, self.h - base_h)))
+        pygame.draw.rect(
+            screen,
+            (95, 95, 95),
+            pygame.Rect(self.x, int(self.y), self.w, min(base_h, self.h))
+        )
+        pygame.draw.rect(
+            screen,
+            (75, 75, 75),
+            pygame.Rect(
+                self.x,
+                int(self.y) + min(base_h, self.h),
+                self.w,
+                max(0, self.h - base_h)
+            )
+        )
 
         bottom = int(self.y) + self.h
         for i in range(self.w_tiles):
             col_x = self.x + i * TILE
             cx = col_x + TILE // 2
-            pygame.draw.polygon(screen, (55, 55, 55),
-                                [(cx, bottom), (cx - TILE // 2, bottom - TILE), (cx + TILE // 2, bottom - TILE)])
+            pygame.draw.polygon(
+                screen,
+                (55, 55, 55),
+                [(cx, bottom), (cx - TILE // 2, bottom - TILE), (cx + TILE // 2, bottom - TILE)]
+            )
 
 
 class StalagmiteGroup:
@@ -205,17 +241,31 @@ class StalagmiteGroup:
 
     def draw(self, screen):
         base_h = 2 * TILE
-        pygame.draw.rect(screen, (95, 95, 95),
-                         pygame.Rect(self.x, int(self.y) + self.h - min(base_h, self.h), self.w, min(base_h, self.h)))
-        pygame.draw.rect(screen, (75, 75, 75),
-                         pygame.Rect(self.x, int(self.y), self.w, max(0, self.h - base_h)))
+        pygame.draw.rect(
+            screen,
+            (95, 95, 95),
+            pygame.Rect(
+                self.x,
+                int(self.y) + self.h - min(base_h, self.h),
+                self.w,
+                min(base_h, self.h)
+            )
+        )
+        pygame.draw.rect(
+            screen,
+            (75, 75, 75),
+            pygame.Rect(self.x, int(self.y), self.w, max(0, self.h - base_h))
+        )
 
         top = int(self.y)
         for i in range(self.w_tiles):
             col_x = self.x + i * TILE
             cx = col_x + TILE // 2
-            pygame.draw.polygon(screen, (55, 55, 55),
-                                [(cx, top), (cx - TILE // 2, top + TILE), (cx + TILE // 2, top + TILE)])
+            pygame.draw.polygon(
+                screen,
+                (55, 55, 55),
+                [(cx, top), (cx - TILE // 2, top + TILE), (cx + TILE // 2, top + TILE)]
+            )
 
 
 class Player:
@@ -293,6 +343,7 @@ def build_contiguous_runs(points):
         runs[y] = row_runs
     return runs
 
+
 def build_stalactites(tilemap):
     if not tilemap.stalact_anchors:
         return []
@@ -302,6 +353,7 @@ def build_stalactites(tilemap):
         for x0, x1 in row_runs:
             out.append(StalactiteGroup(y, x0, x1))
     return out
+
 
 def build_stalagmites(tilemap):
     if not tilemap.stalag_bases:
@@ -313,12 +365,14 @@ def build_stalagmites(tilemap):
             out.append(StalagmiteGroup(y, x0, x1))
     return out
 
+
 def in_door_safe_zone(player_rect, doors):
     inflate = SAFE_ZONE_TILES * TILE
     for d in doors:
         if player_rect.colliderect(d.inflate(inflate, inflate)):
             return True
     return False
+
 
 def build_solids(tilemap, stalactites, stalagmites, safe):
     solids = list(tilemap.base_solids)
@@ -327,6 +381,7 @@ def build_solids(tilemap, stalactites, stalagmites, safe):
     solids.extend([s.solid_rect() for s in stalactites])
     solids.extend([s.solid_rect() for s in stalagmites])
     return solids
+
 
 def collect_lethal_tips(stalactites, stalagmites, safe):
     if safe:
@@ -337,6 +392,7 @@ def collect_lethal_tips(stalactites, stalagmites, safe):
     for s in stalagmites:
         tips.extend(s.tip_hitboxes())
     return tips
+
 
 def clamp_player(player, tilemap):
     if player.rect.left < 0:
@@ -359,8 +415,6 @@ class HubScene:
 
         self.stalactites = build_stalactites(self.map)
         self.stalagmites = build_stalagmites(self.map)
-
-        self.door_targets = {0: 1, 1: 2}
 
         self.pending_reset = False
         self.death_timer = 0.0
@@ -428,11 +482,14 @@ class HubScene:
         clamp_player(self.player, self.map)
 
         if keys[pygame.K_e]:
-            for idx, d in enumerate(self.map.doors):
-                if self.player.rect.colliderect(d):
-                    lvl = self.door_targets.get(idx)
-                    self.manager.change(LevelScene(self.manager, self.assets, lvl))
-                    break
+            current_tile = self.map.tile_under_player(self.player.rect)
+
+            if current_tile == "1":
+                self.manager.change(LevelScene(self.manager, self.assets, 1))
+                return
+            elif current_tile == "2":
+                self.manager.change(LevelScene(self.manager, self.assets, 2))
+                return
 
     def draw(self, screen):
         self.map.draw(screen, self.assets)
@@ -441,11 +498,20 @@ class HubScene:
         for st in self.stalactites:
             st.draw(screen)
         screen.blit(self.player.image, self.player.rect)
-        screen.blit(self.font.render("HUB: E pe usa | ESCx2 -> MENU", True, (230, 230, 230)), (10, 10))
+        screen.blit(
+            self.font.render("HUB: E pe usa | ESCx2 -> MENU", True, (230, 230, 230)),
+            (10, 10)
+        )
         if self.lava_stun:
-            screen.blit(self.font.render("STUCK IN LAVA...", True, (255, 200, 120)), (10, 30))
+            screen.blit(
+                self.font.render("STUCK IN LAVA...", True, (255, 200, 120)),
+                (10, 30)
+            )
         elif self.pending_reset:
-            screen.blit(self.font.render("DEAD...", True, (255, 180, 180)), (10, 30))
+            screen.blit(
+                self.font.render("DEAD...", True, (255, 180, 180)),
+                (10, 30)
+            )
 
 
 class LevelScene:
@@ -534,10 +600,16 @@ class LevelScene:
 
         # door back to hub
         if keys[pygame.K_e]:
-            for d in self.map.doors:
-                if self.player.rect.colliderect(d):
-                    self.manager.change(HubScene(self.manager, self.assets))
-                    break
+            current_tile = self.map.tile_under_player(self.player.rect)
+
+            if current_tile in ("D", "R"):
+                self.manager.change(HubScene(self.manager, self.assets))
+                return
+
+            # optional: final portal behavior
+            if current_tile == "F":
+                self.manager.change(HubScene(self.manager, self.assets))
+                return
 
     def draw(self, screen):
         self.map.draw(screen, self.assets)
@@ -546,8 +618,21 @@ class LevelScene:
         for st in self.stalactites:
             st.draw(screen)
         screen.blit(self.player.image, self.player.rect)
-        screen.blit(self.font.render(f"LEVEL {self.level_id}: ESC->HUB | ESCx2->MENU", True, (230, 230, 230)), (10, 10))
+        screen.blit(
+            self.font.render(
+                f"LEVEL {self.level_id}: ESC->HUB | ESCx2->MENU",
+                True,
+                (230, 230, 230)
+            ),
+            (10, 10)
+        )
         if self.lava_stun:
-            screen.blit(self.font.render("STUCK IN LAVA...", True, (255, 200, 120)), (10, 30))
+            screen.blit(
+                self.font.render("STUCK IN LAVA...", True, (255, 200, 120)),
+                (10, 30)
+            )
         elif self.pending_reset:
-            screen.blit(self.font.render("DEAD...", True, (255, 180, 180)), (10, 30))
+            screen.blit(
+                self.font.render("DEAD...", True, (255, 180, 180)),
+                (10, 30)
+            )
