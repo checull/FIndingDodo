@@ -1,5 +1,6 @@
 import pygame
 from dataclasses import dataclass
+from pathlib import Path
 
 from tiles import TileSet, load_player, TILE
 
@@ -23,7 +24,7 @@ SAFE_ZONE_TILES = 2
 CONSUMABLE_CHAR = "C"
 REQUIRED_CONSUMABLES = 6
 
-# ===================== STALACT/STALAG sizes =====================
+# ===================== STALACT/STALAG =====================
 STALACT_LEN_TILES = 3
 STALAG_LEN_TILES = 3
 STALACT_FALL_GRAV = 0.9
@@ -38,13 +39,84 @@ TIP_W = max(4, TILE // 3)
 class Assets:
     tileset: TileSet
     player_img: pygame.Surface
+    collect_sfx: pygame.mixer.Sound | None
+    win_sfx: pygame.mixer.Sound | None
 
     @staticmethod
     def from_files(tileset_path: str, player_path: str) -> "Assets":
+        audio_dir = Path("assets/audio")
+
+        def load_sfx(name: str, volume: float):
+            try:
+                s = pygame.mixer.Sound(str(audio_dir / name))
+                s.set_volume(volume)
+                return s
+            except Exception:
+                return None
+
         return Assets(
             tileset=TileSet(tileset_path),
             player_img=load_player(player_path),
+            collect_sfx=load_sfx("collect.mpeg", 0.45),
+            win_sfx=load_sfx("win.mpeg", 0.60),
         )
+
+
+def build_connected_groups(points):
+    pts = set(points)
+    groups = []
+
+    while pts:
+        start = next(iter(pts))
+        stack = [start]
+        pts.remove(start)
+        group = []
+
+        while stack:
+            x, y = stack.pop()
+            group.append((x, y))
+
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if (nx, ny) in pts:
+                    pts.remove((nx, ny))
+                    stack.append((nx, ny))
+
+        groups.append(group)
+
+    return groups
+
+
+class CollectibleGroup:
+    def __init__(self, level_id: int, tiles: list[tuple[int, int]]):
+        self.level_id = level_id
+        self.tiles = sorted(tiles)
+
+        self.rects = [
+            pygame.Rect(x * TILE, y * TILE, TILE, TILE)
+            for x, y in self.tiles
+        ]
+
+        min_x = min(x for x, _ in self.tiles) * TILE
+        min_y = min(y for _, y in self.tiles) * TILE
+        max_x = (max(x for x, _ in self.tiles) + 1) * TILE
+        max_y = (max(y for _, y in self.tiles) + 1) * TILE
+        self.bounds = pygame.Rect(min_x, min_y, max_x - min_x, max_y - min_y)
+
+        self.uid = (self.level_id, tuple(self.tiles))
+
+    def touches(self, player_rect: pygame.Rect) -> bool:
+        for r in self.rects:
+            if player_rect.colliderect(r):
+                return True
+        return False
+
+    def draw(self, screen):
+        outer = self.bounds.inflate(-max(2, TILE // 6), -max(2, TILE // 6))
+        pygame.draw.rect(screen, (0, 180, 180), outer, border_radius=6)
+
+        inner = outer.inflate(-max(4, TILE // 5), -max(4, TILE // 5))
+        if inner.width > 0 and inner.height > 0:
+            pygame.draw.rect(screen, (80, 255, 255), inner, border_radius=6)
 
 
 class TileMap:
@@ -59,7 +131,7 @@ class TileMap:
         self.base_solids: list[pygame.Rect] = []
         self.doors: list[pygame.Rect] = []
         self.lava: list[pygame.Rect] = []
-        self.collectibles: list[pygame.Rect] = []
+        self.collectible_tiles: list[tuple[int, int]] = []
 
         self.spawn_px = (2 * TILE, (self.h - 3) * TILE)
         self.stalact_anchors: list[tuple[int, int]] = []
@@ -71,7 +143,7 @@ class TileMap:
         self.base_solids.clear()
         self.doors.clear()
         self.lava.clear()
-        self.collectibles.clear()
+        self.collectible_tiles.clear()
         self.stalact_anchors.clear()
         self.stalag_bases.clear()
 
@@ -93,7 +165,7 @@ class TileMap:
                 elif ch == LAVA_CHAR:
                     self.lava.append(r)
                 elif ch == CONSUMABLE_CHAR:
-                    self.collectibles.append(r)
+                    self.collectible_tiles.append((x, y))
 
         self.base_solids.extend([
             pygame.Rect(-TILE, 0, TILE, self.world_h),
@@ -133,14 +205,6 @@ class TileMap:
                     pygame.draw.rect(screen, (80, 200, 80), rect)
                 elif ch == LAVA_CHAR:
                     pygame.draw.rect(screen, (220, 80, 20), rect)
-                elif ch == CONSUMABLE_CHAR:
-                    # fallback draw; if you want a sprite later, replace this
-                    inset = max(4, TILE // 4)
-                    pygame.draw.ellipse(
-                        screen,
-                        (0, 220, 220),
-                        pygame.Rect(px + inset, py + inset, TILE - 2 * inset, TILE - 2 * inset)
-                    )
 
 
 class StalactiteGroup:
@@ -209,7 +273,12 @@ class StalactiteGroup:
         pygame.draw.rect(
             screen,
             (75, 75, 75),
-            pygame.Rect(self.x, int(self.y) + min(base_h, self.h), self.w, max(0, self.h - base_h))
+            pygame.Rect(
+                self.x,
+                int(self.y) + min(base_h, self.h),
+                self.w,
+                max(0, self.h - base_h)
+            )
         )
 
         bottom = int(self.y) + self.h
@@ -254,7 +323,12 @@ class StalagmiteGroup:
         pygame.draw.rect(
             screen,
             (95, 95, 95),
-            pygame.Rect(self.x, int(self.y) + self.h - min(base_h, self.h), self.w, min(base_h, self.h))
+            pygame.Rect(
+                self.x,
+                int(self.y) + self.h - min(base_h, self.h),
+                self.w,
+                min(base_h, self.h)
+            )
         )
         pygame.draw.rect(
             screen,
@@ -415,6 +489,11 @@ def ensure_global_progress(manager):
         manager.collected_ids = set()
 
 
+def reset_global_progress(manager):
+    manager.collected_count = 0
+    manager.collected_ids = set()
+
+
 class BaseScene:
     def draw_counter(self, screen):
         ensure_global_progress(self.manager)
@@ -431,6 +510,7 @@ class HubScene(BaseScene):
         ensure_global_progress(self.manager)
 
         import level_data
+
         self.map = TileMap(level_data.HUB)
         self.player = Player(self.map.spawn_px, assets.player_img)
         self.font = pygame.font.SysFont(None, 24)
@@ -454,6 +534,7 @@ class HubScene(BaseScene):
         self.death_timer = delay
 
     def do_reset(self):
+        reset_global_progress(self.manager)
         self.manager.change(HubScene(self.manager, self.assets))
 
     def start_lava_stun(self):
@@ -518,8 +599,8 @@ class HubScene(BaseScene):
             sg.draw(screen)
         for st in self.stalactites:
             st.draw(screen)
-        screen.blit(self.player.image, self.player.rect)
 
+        screen.blit(self.player.image, self.player.rect)
         screen.blit(
             self.font.render("HUB: E pe usa | ESCx2 -> MENU", True, (230, 230, 230)),
             (10, 10)
@@ -548,13 +629,11 @@ class LevelScene(BaseScene):
         grid = self.manager.get_level_grid(level_id)
         self.map = TileMap(grid)
 
-        # remove already-collected consumables from this map instance
-        filtered = []
-        for r in self.map.collectibles:
-            cid = (self.level_id, r.x, r.y)
-            if cid not in self.manager.collected_ids:
-                filtered.append(r)
-        self.map.collectibles = filtered
+        self.collectibles: list[CollectibleGroup] = []
+        for group_tiles in build_connected_groups(self.map.collectible_tiles):
+            grp = CollectibleGroup(self.level_id, group_tiles)
+            if grp.uid not in self.manager.collected_ids:
+                self.collectibles.append(grp)
 
         self.player = Player(self.map.spawn_px, assets.player_img)
         self.font = pygame.font.SysFont(None, 24)
@@ -579,8 +658,11 @@ class LevelScene(BaseScene):
         self.death_timer = delay
 
     def do_reset(self):
+        reset_global_progress(self.manager)
+
         if self.level_id == 2 and hasattr(self.manager, "on_level2_death"):
             self.manager.on_level2_death()
+
         self.manager.change(LevelScene(self.manager, self.assets, self.level_id))
 
     def start_lava_stun(self):
@@ -593,15 +675,16 @@ class LevelScene(BaseScene):
 
     def collect_consumables(self):
         remaining = []
-        for r in self.map.collectibles:
-            if self.player.rect.colliderect(r):
-                cid = (self.level_id, r.x, r.y)
-                if cid not in self.manager.collected_ids:
-                    self.manager.collected_ids.add(cid)
+        for grp in self.collectibles:
+            if grp.touches(self.player.rect):
+                if grp.uid not in self.manager.collected_ids:
+                    self.manager.collected_ids.add(grp.uid)
                     self.manager.collected_count += 1
+                    if self.assets.collect_sfx:
+                        self.assets.collect_sfx.play()
             else:
-                remaining.append(r)
-        self.map.collectibles = remaining
+                remaining.append(grp)
+        self.collectibles = remaining
 
     def update(self, dt):
         if self.lava_stun:
@@ -641,13 +724,11 @@ class LevelScene(BaseScene):
 
         clamp_player(self.player, self.map)
 
-        # auto-pickup on touch
         self.collect_consumables()
 
         if keys[pygame.K_e]:
             current_tile = self.map.tile_under_player(self.player.rect)
 
-            # exit back to HUB; if all 6 collected -> win cutscene
             if current_tile in ("D", "R"):
                 if self.manager.collected_count >= REQUIRED_CONSUMABLES:
                     self.manager.change(WinScene(self.manager, self.assets))
@@ -664,12 +745,16 @@ class LevelScene(BaseScene):
 
     def draw(self, screen):
         self.map.draw(screen, self.assets)
+
+        for grp in self.collectibles:
+            grp.draw(screen)
+
         for sg in self.stalagmites:
             sg.draw(screen)
         for st in self.stalactites:
             st.draw(screen)
-        screen.blit(self.player.image, self.player.rect)
 
+        screen.blit(self.player.image, self.player.rect)
         screen.blit(
             self.font.render(
                 f"LEVEL {self.level_id}: ESC->HUB | ESCx2->MENU",
@@ -702,12 +787,23 @@ class WinScene(BaseScene):
         self.mid_font = pygame.font.SysFont(None, 36)
         self.small_font = pygame.font.SysFont(None, 28)
 
+        # optional light ducking so win sound is clearer
+        try:
+            pygame.mixer.music.set_volume(0.08)
+        except Exception:
+            pass
+
+        if self.assets.win_sfx:
+            self.assets.win_sfx.play()
+
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_ESCAPE):
-                # reset progress after win
-                self.manager.collected_count = 0
-                self.manager.collected_ids = set()
+                reset_global_progress(self.manager)
+                try:
+                    pygame.mixer.music.set_volume(0.18)
+                except Exception:
+                    pass
                 self.manager.change(HubScene(self.manager, self.assets))
 
     def update(self, dt):
