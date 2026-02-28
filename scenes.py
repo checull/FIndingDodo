@@ -34,6 +34,12 @@ STALACT_TRIGGER_PAD = 2
 TIP_H = TILE
 TIP_W = max(4, TILE // 3)
 
+# ===================== COLORS =====================
+SOLID_FILL = (101, 67, 33)      # maro
+SOLID_OUTLINE = (55, 35, 18)    # contur maro inchis
+PLATFORM_FILL = (125, 85, 45)
+PLATFORM_OUTLINE = (65, 40, 20)
+
 
 @dataclass
 class Assets:
@@ -41,6 +47,7 @@ class Assets:
     player_img: pygame.Surface
     collect_sfx: pygame.mixer.Sound | None
     win_sfx: pygame.mixer.Sound | None
+    background_img: pygame.Surface | None
 
     @staticmethod
     def from_files(tileset_path: str, player_path: str) -> "Assets":
@@ -54,11 +61,18 @@ class Assets:
             except Exception:
                 return None
 
+        def load_background():
+            try:
+                return pygame.image.load("assets/fundal.jpg").convert()
+            except Exception:
+                return None
+
         return Assets(
             tileset=TileSet(tileset_path),
             player_img=load_player(player_path),
-            collect_sfx=load_sfx("collect.mpeg", 0.45),
-            win_sfx=load_sfx("win.mpeg", 0.60),
+            collect_sfx=load_sfx("collect.wav", 0.45),
+            win_sfx=load_sfx("win.wav", 0.60),
+            background_img=load_background(),
         )
 
 
@@ -190,9 +204,11 @@ class TileMap:
                 rect = pygame.Rect(px, py, TILE, TILE)
 
                 if ch == "#":
-                    screen.blit(assets.tileset.ground, (px, py))
+                    pygame.draw.rect(screen, SOLID_FILL, rect)
+                    pygame.draw.rect(screen, SOLID_OUTLINE, rect, 2)
                 elif ch == "=":
-                    screen.blit(assets.tileset.platform, (px, py))
+                    pygame.draw.rect(screen, PLATFORM_FILL, rect)
+                    pygame.draw.rect(screen, PLATFORM_OUTLINE, rect, 2)
                 elif ch == "D":
                     pygame.draw.rect(screen, (180, 70, 70), rect)
                 elif ch == "1":
@@ -495,6 +511,15 @@ def reset_global_progress(manager):
 
 
 class BaseScene:
+    def draw_background(self, screen):
+        if self.assets.background_img:
+            bg = self.assets.background_img
+            if bg.get_size() != screen.get_size():
+                bg = pygame.transform.smoothscale(bg, screen.get_size())
+            screen.blit(bg, (0, 0))
+        else:
+            screen.fill((0, 0, 0))
+
     def draw_counter(self, screen):
         ensure_global_progress(self.manager)
         font = pygame.font.SysFont(None, 28)
@@ -594,7 +619,9 @@ class HubScene(BaseScene):
                 return
 
     def draw(self, screen):
+        self.draw_background(screen)
         self.map.draw(screen, self.assets)
+
         for sg in self.stalagmites:
             sg.draw(screen)
         for st in self.stalactites:
@@ -744,6 +771,7 @@ class LevelScene(BaseScene):
                 return
 
     def draw(self, screen):
+        self.draw_background(screen)
         self.map.draw(screen, self.assets)
 
         for grp in self.collectibles:
@@ -787,7 +815,6 @@ class WinScene(BaseScene):
         self.mid_font = pygame.font.SysFont(None, 36)
         self.small_font = pygame.font.SysFont(None, 28)
 
-        # optional light ducking so win sound is clearer
         try:
             pygame.mixer.music.set_volume(0.08)
         except Exception:
@@ -810,7 +837,11 @@ class WinScene(BaseScene):
         pass
 
     def draw(self, screen):
-        screen.fill((8, 8, 20))
+        self.draw_background(screen)
+
+        overlay = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        screen.blit(overlay, (0, 0))
 
         title = self.big_font.render("YOU WIN", True, (240, 240, 120))
         line1 = self.mid_font.render("All consumables collected.", True, (220, 220, 220))

@@ -17,19 +17,11 @@ TYPING_SPEED_FRAMES = 6
 
 
 class TypewriterText:
-    def __init__(
-        self,
-        full_text: str,
-        font: pygame.font.Font,
-        max_width: int,
-        speed_frames: int,
-        letter_sound: pygame.mixer.Sound | None = None,
-    ):
+    def __init__(self, full_text: str, font: pygame.font.Font, max_width: int, speed_frames: int):
         self.full_text = full_text or ""
         self.font = font
         self.max_width = max_width
         self.speed = max(1, speed_frames)
-        self.letter_sound = letter_sound
 
         self.frame_counter = 0
         self.done = (self.full_text == "")
@@ -37,9 +29,6 @@ class TypewriterText:
         self.lines = self._wrap_text(self.full_text)
         self.visible_chars = 0
         self.total_chars = sum(len(line) for line in self.lines)
-
-        # flattened visible text in exact reveal order
-        self.flat_text = "".join(self.lines)
 
     def _wrap_text(self, text: str):
         if not text:
@@ -59,33 +48,13 @@ class TypewriterText:
             lines.append(current)
         return lines
 
-    def _play_letter_sound_for_index(self, index: int):
-        if self.letter_sound is None:
-            return
-        if not (0 <= index < len(self.flat_text)):
-            return
-
-        ch = self.flat_text[index]
-
-        # play only for visible letters/numbers/punctuation; skip spaces
-        if ch != " ":
-            try:
-                self.letter_sound.play()
-            except Exception:
-                pass
-
     def update(self):
         if self.done:
             return
-
         self.frame_counter += 1
         if self.frame_counter >= self.speed:
             self.frame_counter = 0
-
-            if self.visible_chars < self.total_chars:
-                self._play_letter_sound_for_index(self.visible_chars)
-                self.visible_chars += 1
-
+            self.visible_chars += 1
             if self.visible_chars >= self.total_chars:
                 self.visible_chars = self.total_chars
                 self.done = True
@@ -97,16 +66,13 @@ class TypewriterText:
     def get_visible_lines(self):
         if not self.lines:
             return []
-
         out = []
         remaining = self.visible_chars
-
         for line in self.lines:
             if remaining <= 0:
                 break
             out.append(line[:remaining])
             remaining -= len(line)
-
         return out
 
     def draw(self, surface: pygame.Surface, box_rect: pygame.Rect):
@@ -149,6 +115,7 @@ class MenuScene:
         self.font = pygame.font.SysFont("monospace", 28, bold=True)
         self.small = pygame.font.SysFont("monospace", 18)
 
+        # optional: background = frame5, daca exista
         bg_path = self.intro_dir / "frame5.jpg"
         try:
             self.bg = _load_and_fit_bg(bg_path)
@@ -156,6 +123,7 @@ class MenuScene:
             self.bg = pygame.Surface((SCREEN_W, SCREEN_H))
             self.bg.fill((10, 10, 15))
 
+        # logo
         logo_path = self.intro_dir / "logo.png"
         try:
             self.logo = pygame.image.load(str(logo_path)).convert_alpha()
@@ -177,13 +145,14 @@ class MenuScene:
         self.btn_rect = pygame.Rect(0, 0, bw, bh)
 
     def handle_event(self, event):
+        # STRICT mouse play
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             ipos = self.manager.window_to_internal(event.pos)
             if ipos is None:
                 return
             mx, my = ipos
             if self.btn_rect.collidepoint(mx, my):
-                self.manager.start_game()
+                self.manager.start_game()  # reset maps + go hub
 
     def update(self, dt):
         pass
@@ -191,10 +160,12 @@ class MenuScene:
     def draw(self, surface):
         surface.blit(self.bg, (0, 0))
 
+        # logo centered
         lx = SCREEN_W // 2 - self.logo.get_width() // 2
         ly = int(SCREEN_H * 0.55) - self.logo.get_height() // 2
         surface.blit(self.logo, (lx, ly))
 
+        # button centered
         self.btn_rect.centerx = SCREEN_W // 2
         self.btn_rect.top = ly + self.logo.get_height() + 28
 
@@ -204,13 +175,8 @@ class MenuScene:
 
         btn_s = pygame.Surface(self.btn_rect.size, pygame.SRCALPHA)
         btn_s.fill(color)
-        btn_s.blit(
-            self.btn_label,
-            (
-                (self.btn_rect.w - self.btn_label.get_width()) // 2,
-                (self.btn_rect.h - self.btn_label.get_height()) // 2,
-            ),
-        )
+        btn_s.blit(self.btn_label, ((self.btn_rect.w - self.btn_label.get_width()) // 2,
+                                    (self.btn_rect.h - self.btn_label.get_height()) // 2))
         surface.blit(btn_s, self.btn_rect)
 
         hint = self.small.render("Click Play (mouse only)", True, (220, 220, 220))
@@ -232,45 +198,21 @@ class IntroScene:
         self.font = pygame.font.SysFont("monospace", FONT_SIZE)
         self.prompt_font = pygame.font.SysFont("monospace", 18)
 
-        self.letter_sound = self._load_letter_sound()
-
         self.script = [
             ("frame1.jpg", "The Dodo was always a suspicious bird, so the caveman wanted to follow it"),
             ("frame2.jpg", "Curious, he follows it inside..."),
             ("frame3.png", "Suddenly, everything begins to spin..."),
             ("frame4.jpg", "What is actually this Dodo..."),
-            ("frame5.jpg", ""),
+            ("frame5.jpg", ""),  # la final -> menu
         ]
 
         self.frames = []
         for fname, text in self.script:
             bg = _load_and_fit_bg(self.intro_dir / fname)
-            tw = TypewriterText(
-                text,
-                self.font,
-                TEXT_BOX_W - TEXT_PADDING * 2,
-                TYPING_SPEED_FRAMES,
-                letter_sound=self.letter_sound,
-            )
+            tw = TypewriterText(text, self.font, TEXT_BOX_W - TEXT_PADDING * 2, TYPING_SPEED_FRAMES)
             self.frames.append({"bg": bg, "tw": tw, "is_last": (fname == "frame5.jpg")})
 
         self.index = 0
-
-    def _load_letter_sound(self):
-        sound_path = self.intro_dir / "mixkit-hard-typewriter-click-1119.wav"
-
-        try:
-            if pygame.mixer.get_init() is None:
-                pygame.mixer.init()
-        except Exception:
-            return None
-
-        try:
-            snd = pygame.mixer.Sound(str(sound_path))
-            snd.set_volume(0.35)
-            return snd
-        except Exception:
-            return None
 
     def _cur(self):
         return self.frames[self.index]
@@ -279,6 +221,7 @@ class IntroScene:
         cur = self._cur()
         tw = cur["tw"]
 
+        # last frame: orice key/click -> menu
         if cur["is_last"]:
             if event.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
                 self.manager.go_menu()
@@ -299,6 +242,7 @@ class IntroScene:
         surface.blit(cur["bg"], (0, 0))
 
         if cur["is_last"]:
+            # hint
             hint = self.prompt_font.render("[ Press any key to continue ]", True, (220, 220, 220))
             surface.blit(hint, (SCREEN_W // 2 - hint.get_width() // 2, SCREEN_H - 60))
             return
@@ -313,10 +257,5 @@ class IntroScene:
 
         if cur["tw"].done and cur["tw"].full_text != "":
             prompt = self.prompt_font.render("[ Press any key to continue ]", True, PROMPT_COLOR)
-            surface.blit(
-                prompt,
-                (
-                    TEXT_BOX_X + TEXT_BOX_W - prompt.get_width() - TEXT_PADDING,
-                    TEXT_BOX_Y + TEXT_BOX_H - prompt.get_height() - 8,
-                ),
-            )
+            surface.blit(prompt, (TEXT_BOX_X + TEXT_BOX_W - prompt.get_width() - TEXT_PADDING,
+                                  TEXT_BOX_Y + TEXT_BOX_H - prompt.get_height() - 8))
