@@ -13,22 +13,26 @@ TEXT_BOX_H = 120
 TEXT_PADDING = 20
 
 FONT_SIZE = 32
-TYPING_SPEED_FRAMES = 6
+TYPING_SPEED_FRAMES = 8
+SFX_CHAR_INTERVAL = 1
 
 
 class TypewriterText:
-    def __init__(self, full_text: str, font: pygame.font.Font, max_width: int, speed_frames: int):
+    def __init__(self, full_text: str, font: pygame.font.Font, max_width: int, speed_frames: int, typing_sfx: pygame.mixer.Sound | None = None):
         self.full_text = full_text or ""
         self.font = font
         self.max_width = max_width
         self.speed = max(1, speed_frames)
+        self.typing_sfx = typing_sfx
 
         self.frame_counter = 0
         self.done = (self.full_text == "")
 
         self.lines = self._wrap_text(self.full_text)
+        self.flat_text = "".join(self.lines)
         self.visible_chars = 0
-        self.total_chars = sum(len(line) for line in self.lines)
+        self.total_chars = len(self.flat_text)
+        self.sfx_counter = 0
 
     def _wrap_text(self, text: str):
         if not text:
@@ -54,7 +58,17 @@ class TypewriterText:
         self.frame_counter += 1
         if self.frame_counter >= self.speed:
             self.frame_counter = 0
-            self.visible_chars += 1
+            if self.visible_chars < self.total_chars:
+                ch = self.flat_text[self.visible_chars]
+                self.visible_chars += 1
+                if self.typing_sfx is not None:
+                    self.sfx_counter += 1
+                    if self.sfx_counter >= SFX_CHAR_INTERVAL:
+                        self.sfx_counter = 0
+                        try:
+                            self.typing_sfx.play()
+                        except Exception:
+                            pass
             if self.visible_chars >= self.total_chars:
                 self.visible_chars = self.total_chars
                 self.done = True
@@ -197,6 +211,7 @@ class IntroScene:
         pygame.font.init()
         self.font = pygame.font.SysFont("monospace", FONT_SIZE)
         self.prompt_font = pygame.font.SysFont("monospace", 18)
+        self.typing_sfx = self._load_typing_sfx()
 
         self.script = [
             ("frame1.jpg", "The Dodo was always a suspicious bird, so the caveman wanted to follow it"),
@@ -209,10 +224,44 @@ class IntroScene:
         self.frames = []
         for fname, text in self.script:
             bg = _load_and_fit_bg(self.intro_dir / fname)
-            tw = TypewriterText(text, self.font, TEXT_BOX_W - TEXT_PADDING * 2, TYPING_SPEED_FRAMES)
+            tw = TypewriterText(text, self.font, TEXT_BOX_W - TEXT_PADDING * 2, TYPING_SPEED_FRAMES, self.typing_sfx)
             self.frames.append({"bg": bg, "tw": tw, "is_last": (fname == "frame5.jpg")})
 
         self.index = 0
+
+
+    def _load_typing_sfx(self):
+        audio_dir = self.intro_dir.parent / "audio"
+        project_dir = self.intro_dir.parent.parent
+
+        candidates = [
+            project_dir / "mixkit-hard-typewriter-click-1119.wav",
+            self.intro_dir / "mixkit-hard-typewriter-click-1119.wav",
+            audio_dir / "mixkit-hard-typewriter-click-1119.wav",
+        ]
+
+        for path in candidates:
+            if not path.exists():
+                continue
+            try:
+                s = pygame.mixer.Sound(str(path))
+                s.set_volume(0.35)
+                return s
+            except Exception:
+                continue
+
+        for stem in ("typewriter", "typing", "keyboard", "keys", "collect"):
+            for ext in (".wav", ".ogg", ".mp3", ".mpeg"):
+                path = audio_dir / f"{stem}{ext}"
+                if not path.exists():
+                    continue
+                try:
+                    s = pygame.mixer.Sound(str(path))
+                    s.set_volume(0.35)
+                    return s
+                except Exception:
+                    continue
+        return None
 
     def _cur(self):
         return self.frames[self.index]
